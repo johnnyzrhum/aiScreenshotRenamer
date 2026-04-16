@@ -1,71 +1,73 @@
 import os
-import time  # Added this import
+import time
 from dotenv import load_dotenv
 from google import genai
 from PIL import Image
+import fitz  # PyMuPDF
 from pillow_heif import register_heif_opener
 
 # Initialize HEIC support and Load .env
 register_heif_opener()
 load_dotenv()
 
-# Pulls the key from your hidden .env file
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY"),
-    http_options={'api_version': 'v1beta'}
-)
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-def process_batch(directory):
-    valid_extensions = ('.png', '.jpg', '.jpeg', '.heic')
+def processBatch(directory):
+    validExtensions = ('.png', '.jpg', '.jpeg', '.heic', '.pdf')
+    filesToProcess = [f for f in os.listdir(directory) if f.lower().endswith(validExtensions)]
     
-    # Identify files that need renaming
-    files = [f for f in os.listdir(directory) 
-             if f.lower().endswith(valid_extensions) and f.startswith(('Screenshot', 'IMG_'))]
-    
-    print(f"Found {len(files)} new files to process...")
+    print(f"Found {len(filesToProcess)} new files to process...")
 
-    for filename in files:
-        old_path = os.path.join(directory, filename)
-        file_ext = os.path.splitext(filename)[1].lower()
+    for fileName in filesToProcess:
+        oldPath = os.path.join(directory, fileName)
+        fileExt = os.path.splitext(fileName)[1].lower()
         success = False
-        
+
         while not success:
             try:
-                img = Image.open(old_path)
-                
-                response = client.models.generate_content(
-                    model="gemini-3-flash-preview",
-                    contents=["Describe this image for a filename. 3 words, underscores, no extension.", img]
-                )
-                
-                suggested_name = response.text.strip().lower().replace(" ", "_")
-                clean_name = "".join(c for c in suggested_name if c.isalnum() or c == '_')
-                
-                # Suffix prevents overwriting if Gemini names two files the same thing
-                timestamp = int(time.time() % 1000)
-                new_name = f"{clean_name}_{timestamp}{file_ext}"
-                new_path = os.path.join(directory, new_name)
+                modelName = "gemini-3.1-flash-lite-preview"
 
-                os.rename(old_path, new_path)
-                print(f"✅ Renamed: {filename} -> {new_name}")
+                if fileExt == '.pdf':
+                    with open(oldPath, "rb") as f:
+                        docData = f.read()
+                    response = client.models.generate_content(
+                        model=modelName,
+                        contents=[
+                            "Describe this document for a filename. 3 words, underscores, no extension.",
+                            {"inline_data": {"mime_type": "application/pdf", "data": docData}}
+                        ]
+                    )
+                else:
+                    img = Image.open(oldPath)
+                    response = client.models.generate_content(
+                        model=modelName,
+                        contents=["Describe this image for a filename. 3 words, underscores, no extension.", img]
+                    )
+
+                suggestedName = response.text.strip().lower().replace(" ", "_")
+                cleanName = "".join(c for c in suggestedName if c.isalnum() or c == '_')
+                
+                timeStamp = int(time.time() % 1000)
+                newName = f"{cleanName}_{timeStamp}{fileExt}"
+                newPath = os.path.join(directory, newName)
+                
+                os.rename(oldPath, newPath)
+                print(f"✅ Renamed: {fileName} -> {newName}")
                 success = True
-                time.sleep(0.5) 
 
             except Exception as e:
-                error_msg = str(e).lower()
-                if "429" in error_msg or "exhausted" in error_msg:
-                    print(f"⚠️ Rate limit hit. Waiting 10s...")
+                errorMsg = str(e).lower()
+                if "429" in errorMsg or "exhausted" in errorMsg:
+                    print("⚠️ Rate limit hit. Waiting 10s...")
                     time.sleep(10)
                 else:
-                    print(f"❌ Skipping {filename} due to error: {e}")
-                    break 
+                    print(f"❌ Skipping {fileName} due to error: {e}")
+                    break
 
 if __name__ == "__main__":
-    raw_path = os.getenv("DROPBOX_PATH")
-    
-    if raw_path:
-        # Use abspath + expanduser to be bulletproof against "path doubling"
-        target_dir = os.path.abspath(os.path.expanduser(raw_path))
-        process_batch(target_dir)
+    rawPath = os.getenv("DROPBOX_PATH")
+    if rawPath:
+        targetDir = os.path.abspath(os.path.expanduser(rawPath))
+        processBatch(targetDir)
     else:
         print("❌ Error: DROPBOX_PATH not found in .env file.")
