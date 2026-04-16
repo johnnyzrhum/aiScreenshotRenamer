@@ -1,3 +1,5 @@
+# AI Screenshot & PDF Renamer - Version 1.1
+
 import os
 import time
 from dotenv import load_dotenv
